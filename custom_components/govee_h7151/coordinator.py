@@ -240,6 +240,8 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
     async def _connect_and_run(self, operation):
         ble_device = bluetooth.async_ble_device_from_address(
             self.hass, self.address, connectable=True
+        ) or bluetooth.async_ble_device_from_address(
+            self.hass, self.address, connectable=False
         )
         if not ble_device:
             raise UpdateFailed(f"Device {self.address} not found — is it powered on and in range?")
