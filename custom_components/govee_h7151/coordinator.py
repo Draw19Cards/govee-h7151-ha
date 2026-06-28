@@ -249,10 +249,18 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
         if self._client is not None and self._client.is_connected:
             return
 
-        ble_device = bluetooth.async_ble_device_from_address(
+        _LOGGER.debug("%s: looking up BLE device", self.address)
+        ble_device_connectable = bluetooth.async_ble_device_from_address(
             self.hass, self.address, connectable=True
-        ) or bluetooth.async_ble_device_from_address(
+        )
+        ble_device = ble_device_connectable or bluetooth.async_ble_device_from_address(
             self.hass, self.address, connectable=False
+        )
+        _LOGGER.debug(
+            "%s: device lookup result — connectable=%s fallback=%s",
+            self.address,
+            ble_device_connectable is not None,
+            ble_device is not None and ble_device_connectable is None,
         )
         if not ble_device:
             raise UpdateFailed(
@@ -266,18 +274,26 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
             except asyncio.QueueEmpty:
                 break
 
-        client = await establish_connection(
-            BleakClient,
-            ble_device,
-            self.address,
-            disconnected_callback=self._on_disconnect,
-            max_attempts=1,
-        )
+        _LOGGER.debug("%s: calling establish_connection", self.address)
+        try:
+            client = await establish_connection(
+                BleakClient,
+                ble_device,
+                self.address,
+                disconnected_callback=self._on_disconnect,
+                max_attempts=1,
+            )
+        except Exception as err:
+            _LOGGER.debug("%s: establish_connection failed: %s", self.address, err)
+            raise
+        _LOGGER.debug("%s: BLE connected, starting notifications", self.address)
         await client.start_notify(
             RECV_UUID, lambda _, d: self._notify_queue.put_nowait(bytes(d))
         )
         await asyncio.sleep(0.1)
+        _LOGGER.debug("%s: starting key exchange", self.address)
         session_key = await _key_exchange(client, self._notify_queue)
+        _LOGGER.debug("%s: key exchange complete, session ready", self.address)
         self._client = client
         self._session_key = session_key
 
