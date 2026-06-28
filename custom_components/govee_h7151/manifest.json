@@ -1,0 +1,13 @@
+{
+  "domain": "govee_h7151",
+  "name": "Govee H7151 Dehumidifier",
+  "version": "0.1.0",
+  "codeowners": [],
+  "requirements": [],
+  "bluetooth": [
+    {"local_name": "ihoment_H7151*"},
+    {"local_name": "H7151*"}
+  ],
+  "dependencies": ["bluetooth"],
+  "iot_class": "local_polling"
+}

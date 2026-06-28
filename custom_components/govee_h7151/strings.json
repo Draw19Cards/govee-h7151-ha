@@ -1,0 +1,20 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Govee H7151 Dehumidifier",
+        "description": "Enter the BLE address of your H7151 dehumidifier (e.g. AA:BB:CC:DD:EE:FF on Linux, or the UUID on macOS).",
+        "data": {
+          "address": "BLE Address"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "Govee H7151 Dehumidifier",
+        "description": "Set up {name}?"
+      }
+    },
+    "abort": {
+      "already_configured": "Device is already configured."
+    }
+  }
+}

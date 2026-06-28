@@ -1,0 +1,11 @@
+DOMAIN = "govee_h7151"
+
+MODE_LOW    = "low"
+MODE_MEDIUM = "medium"
+MODE_HIGH   = "high"
+MODE_AUTO   = "auto"
+MODE_DRYER  = "dryer"
+MODES = [MODE_LOW, MODE_MEDIUM, MODE_HIGH, MODE_AUTO, MODE_DRYER]
+
+MIN_HUMIDITY = 35
+MAX_HUMIDITY = 85
