@@ -271,6 +271,7 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
             ble_device,
             self.address,
             disconnected_callback=self._on_disconnect,
+            max_attempts=1,
         )
         await client.start_notify(
             RECV_UUID, lambda _, d: self._notify_queue.put_nowait(bytes(d))
