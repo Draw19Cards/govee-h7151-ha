@@ -13,6 +13,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from bleak import BleakClient
+from bleak_retry_connector import establish_connection
 
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
@@ -237,14 +238,21 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
         self._lock = asyncio.Lock()
 
     async def _connect_and_run(self, operation):
-        ble_device = bluetooth.async_ble_device_from_address(self.hass, self.address) or self.address
+        ble_device = bluetooth.async_ble_device_from_address(
+            self.hass, self.address, connectable=True
+        )
+        if not ble_device:
+            raise UpdateFailed(f"Device {self.address} not found — is it powered on and in range?")
         queue: asyncio.Queue = asyncio.Queue()
 
-        async with BleakClient(ble_device, timeout=20) as client:
+        client = await establish_connection(BleakClient, ble_device, self.address)
+        try:
             await client.start_notify(RECV_UUID, lambda _, d: queue.put_nowait(bytes(d)))
             await asyncio.sleep(0.1)
             session_key = await _key_exchange(client, queue)
             return await operation(client, session_key, queue)
+        finally:
+            await client.disconnect()
 
     async def _async_update_data(self) -> H7151State:
         async with self._lock:
