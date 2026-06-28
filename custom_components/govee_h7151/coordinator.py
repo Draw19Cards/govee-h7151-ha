@@ -252,7 +252,10 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
             session_key = await _key_exchange(client, queue)
             return await operation(client, session_key, queue)
         finally:
-            await client.disconnect()
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
 
     async def _async_update_data(self) -> H7151State:
         async with self._lock:
