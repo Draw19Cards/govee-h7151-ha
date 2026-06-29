@@ -13,7 +13,9 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from bleak import BleakClient
+from bleak_retry_connector import establish_connection
 
+from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -228,114 +230,99 @@ async def _read_state(
 # ── Coordinator ───────────────────────────────────────────────────────────────
 
 class H7151Coordinator(DataUpdateCoordinator[H7151State]):
-    """Manages a persistent BLE connection and periodic state updates."""
+    """Connect-per-poll BLE coordinator for the H7151.
+
+    The device only supports a single BLE connection and drops it shortly
+    after each exchange, so we connect, do our work, and disconnect every
+    cycle. Connecting through bleak_retry_connector.establish_connection lets
+    habluetooth track and release the connection slot correctly; holding the
+    connection (or connecting around habluetooth) leaks the single slot.
+    """
 
     def __init__(self, hass: HomeAssistant, address: str, name: str) -> None:
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=POLL_INTERVAL)
         self.address = address
         self.device_name = name
         self._lock = asyncio.Lock()
-        self._client: Optional[BleakClient] = None
-        self._session_key: Optional[bytes] = None
         self._notify_queue: asyncio.Queue = asyncio.Queue()
 
-    def _on_disconnect(self, _client: BleakClient) -> None:
-        self._client = None
-        self._session_key = None
+    async def _connect(self) -> tuple[BleakClient, bytes]:
+        """Open a connection and negotiate a session key."""
+        ble_device = bluetooth.async_ble_device_from_address(
+            self.hass, self.address, connectable=True
+        ) or bluetooth.async_ble_device_from_address(
+            self.hass, self.address, connectable=False
+        )
+        if not ble_device:
+            raise UpdateFailed(
+                f"Device {self.address} not found — is it powered on and in range?"
+            )
 
-    async def _ensure_connected(self) -> None:
-        """Connect and negotiate a session key if not already connected."""
-        if self._client is not None and self._client.is_connected:
-            return
-
-        # Drop any stale notifications from a previous session.
+        # Drop any stale notifications from a previous connection.
         while not self._notify_queue.empty():
             try:
                 self._notify_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
 
-        # Use the raw MAC address (not a habluetooth BLEDevice) so BleakClient
-        # talks directly to the system BT adapter and bypasses habluetooth's
-        # slot tracking, which leaks slots on failed connect attempts.
         _LOGGER.debug("%s: connecting", self.address)
-        try:
-            client = BleakClient(
-                self.address,
-                disconnected_callback=self._on_disconnect,
-            )
-            await client.connect(timeout=10)
-        except Exception as err:
-            _LOGGER.debug("%s: connect failed: %s", self.address, err)
-            raise
-        _LOGGER.debug("%s: BLE connected, starting notifications", self.address)
+        client = await establish_connection(
+            BleakClient, ble_device, self.address, max_attempts=2
+        )
         await client.start_notify(
             RECV_UUID, lambda _, d: self._notify_queue.put_nowait(bytes(d))
         )
         await asyncio.sleep(0.1)
-        _LOGGER.debug("%s: starting key exchange", self.address)
         session_key = await _key_exchange(client, self._notify_queue)
-        _LOGGER.debug("%s: key exchange complete, session ready", self.address)
-        self._client = client
-        self._session_key = session_key
+        _LOGGER.debug("%s: session ready", self.address)
+        return client, session_key
+
+    @staticmethod
+    async def _disconnect(client: BleakClient) -> None:
+        try:
+            await client.disconnect()
+        except Exception as err:  # pragma: no cover - best effort cleanup
+            _LOGGER.debug("disconnect error (ignored): %s", err)
 
     async def async_disconnect(self) -> None:
-        """Disconnect cleanly (called on integration unload)."""
-        if self._client and self._client.is_connected:
-            try:
-                await self._client.disconnect()
-            except Exception:
-                pass
-        self._client = None
-        self._session_key = None
+        """No persistent connection is held; nothing to clean up on unload."""
 
     async def _async_update_data(self) -> H7151State:
         async with self._lock:
             try:
-                await self._ensure_connected()
-                return await _read_state(
-                    self._client, self._session_key, self._notify_queue
-                )
+                client, session_key = await self._connect()
+                try:
+                    return await _read_state(client, session_key, self._notify_queue)
+                finally:
+                    await self._disconnect(client)
             except Exception as err:
                 raise UpdateFailed(
                     f"BLE error communicating with {self.address}: {err}"
                 ) from err
 
-    async def async_set_power(self, on: bool) -> None:
+    async def _write(self, plain: bytes) -> None:
         async with self._lock:
-            await self._ensure_connected()
-            await _send_cmd(
-                self._client, self._session_key, self._notify_queue,
-                _make_plain(0x33, 0x01, bytes([0x01 if on else 0x00])),
-            )
+            client, session_key = await self._connect()
+            try:
+                await _send_cmd(client, session_key, self._notify_queue, plain)
+            finally:
+                await self._disconnect(client)
+
+    async def async_set_power(self, on: bool) -> None:
+        await self._write(_make_plain(0x33, 0x01, bytes([0x01 if on else 0x00])))
         await self.async_request_refresh()
 
     async def async_set_fan_speed(self, speed: int) -> None:
-        async with self._lock:
-            await self._ensure_connected()
-            await _send_cmd(
-                self._client, self._session_key, self._notify_queue,
-                _make_plain(0x3A, 0x05, bytes([0x01, speed])),
-            )
+        await self._write(_make_plain(0x3A, 0x05, bytes([0x01, speed])))
         await self.async_request_refresh()
 
     async def async_set_target_humidity(self, pct: float) -> None:
         pct = max(35.0, min(85.0, pct))
         raw = int(round(pct * 100))
         payload = bytes([0x03, 0x00, 0x00, (raw >> 8) & 0xFF, raw & 0xFF])
-        async with self._lock:
-            await self._ensure_connected()
-            await _send_cmd(
-                self._client, self._session_key, self._notify_queue,
-                _make_plain(0x3A, 0x05, payload),
-            )
+        await self._write(_make_plain(0x3A, 0x05, payload))
         await self.async_request_refresh()
 
     async def async_set_dryer(self) -> None:
-        async with self._lock:
-            await self._ensure_connected()
-            await _send_cmd(
-                self._client, self._session_key, self._notify_queue,
-                _make_plain(0x3A, 0x05, bytes([0x08, 0x01])),
-            )
+        await self._write(_make_plain(0x3A, 0x05, bytes([0x08, 0x01])))
         await self.async_request_refresh()
