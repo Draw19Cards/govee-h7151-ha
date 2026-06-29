@@ -14,7 +14,6 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from bleak import BleakClient
 
-from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -249,24 +248,6 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
         if self._client is not None and self._client.is_connected:
             return
 
-        _LOGGER.debug("%s: looking up BLE device", self.address)
-        ble_device_connectable = bluetooth.async_ble_device_from_address(
-            self.hass, self.address, connectable=True
-        )
-        ble_device = ble_device_connectable or bluetooth.async_ble_device_from_address(
-            self.hass, self.address, connectable=False
-        )
-        _LOGGER.debug(
-            "%s: device lookup result — connectable=%s fallback=%s",
-            self.address,
-            ble_device_connectable is not None,
-            ble_device is not None and ble_device_connectable is None,
-        )
-        if not ble_device:
-            raise UpdateFailed(
-                f"Device {self.address} not found — is it powered on and in range?"
-            )
-
         # Drop any stale notifications from a previous session.
         while not self._notify_queue.empty():
             try:
@@ -274,10 +255,13 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
             except asyncio.QueueEmpty:
                 break
 
+        # Use the raw MAC address (not a habluetooth BLEDevice) so BleakClient
+        # talks directly to the system BT adapter and bypasses habluetooth's
+        # slot tracking, which leaks slots on failed connect attempts.
         _LOGGER.debug("%s: connecting", self.address)
         try:
             client = BleakClient(
-                ble_device,
+                self.address,
                 disconnected_callback=self._on_disconnect,
             )
             await client.connect(timeout=10)
