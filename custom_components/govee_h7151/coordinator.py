@@ -31,7 +31,12 @@ POLL_INTERVAL = timedelta(seconds=30)
 # notify, or disconnect on a dead link) can otherwise block forever, which would
 # stall the coordinator's poll loop and leave the device stuck "unavailable"
 # with no recovery. Kept below POLL_INTERVAL so polls never pile up.
-OP_TIMEOUT = 20
+OP_TIMEOUT = 25
+# The H7151 only allows one BLE connection at a time, so a poll often loses a
+# race against another client (e.g. the Govee phone app) and gets bumped mid-
+# connect. Retry a few times within OP_TIMEOUT to ride through those transient
+# collisions instead of failing the whole poll cycle.
+CONNECT_ATTEMPTS = 3
 
 
 # ── Crypto (Safe.java) ────────────────────────────────────────────────────────
@@ -256,7 +261,7 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
 
         _LOGGER.debug("%s: connecting", self.address)
         client = await establish_connection(
-            BleakClient, ble_device, self.address, max_attempts=1
+            BleakClient, ble_device, self.address, max_attempts=CONNECT_ATTEMPTS
         )
         await client.start_notify(
             RECV_UUID, lambda _, d: self._notify_queue.put_nowait(bytes(d))

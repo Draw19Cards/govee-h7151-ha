@@ -1,7 +1,7 @@
 {
   "domain": "govee_h7151",
   "name": "Govee H7151 Dehumidifier",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "codeowners": [],
   "requirements": [],
   "bluetooth": [
