@@ -164,6 +164,7 @@ async def _send_cmd(
     session_key: bytes,
     queue: asyncio.Queue,
     plain: bytes,
+    match_len: int = 2,
 ) -> Optional[bytes]:
     await client.write_gatt_char(SEND_UUID, _safe_encrypt(plain, session_key), response=False)
     deadline = asyncio.get_event_loop().time() + 3.0
@@ -172,7 +173,7 @@ async def _send_cmd(
             remaining = deadline - asyncio.get_event_loop().time()
             enc = await asyncio.wait_for(queue.get(), timeout=max(0.1, remaining))
             resp = _safe_decrypt(enc, session_key)
-            if resp[0] == plain[0] and resp[1] == plain[1]:
+            if resp[:match_len] == plain[:match_len]:
                 return resp
         except asyncio.TimeoutError:
             break
@@ -204,17 +205,15 @@ async def _read_state(
     current_temp_c = (th_raw // 1000) / 10.0
     current_humidity = (th_raw % 1000) / 10.0
 
-    r_mode = await _send_cmd(client, session_key, queue, _make_plain(0xAA, 0x05, b"\x00"))
-    mode_reg = r_mode[3] if (r_mode is not None and r_mode[2] == 0x00) else 0x01
+    r_mode = await _send_cmd(client, session_key, queue, _make_plain(0xAA, 0x05, b"\x00"), match_len=3)
+    mode_reg = r_mode[3] if r_mode is not None else 0x01
 
-    r_fan = await _send_cmd(client, session_key, queue, _make_plain(0xAA, 0x05, b"\x01"))
-    fan_speed = r_fan[3] if (r_fan is not None and r_fan[2] == 0x01) else 0
+    r_fan = await _send_cmd(client, session_key, queue, _make_plain(0xAA, 0x05, b"\x01"), match_len=3)
+    fan_speed = r_fan[3] if r_fan is not None else 0
 
-    r_hum = await _send_cmd(client, session_key, queue, _make_plain(0xAA, 0x05, b"\x03"))
+    r_hum = await _send_cmd(client, session_key, queue, _make_plain(0xAA, 0x05, b"\x03"), match_len=3)
     target_humidity = 0.0
     if r_hum is not None:
-        _LOGGER.debug("AA 05 03 response: %s", r_hum.hex())
-    if r_hum is not None and r_hum[2] == 0x03:
         target_humidity = struct.unpack(">H", r_hum[5:7])[0] / 100.0
 
     return H7151State(
