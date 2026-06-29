@@ -27,6 +27,11 @@ SEND_UUID = "00010203-0405-0607-0809-0a0b0c0d2b11"
 RECV_UUID = "00010203-0405-0607-0809-0a0b0c0d2b10"
 PRODUCT_KEY = b"MakingLifeSmarte"
 POLL_INTERVAL = timedelta(seconds=30)
+# Hard ceiling on a full connect + exchange + disconnect. A BLE call (connect,
+# notify, or disconnect on a dead link) can otherwise block forever, which would
+# stall the coordinator's poll loop and leave the device stuck "unavailable"
+# with no recovery. Kept below POLL_INTERVAL so polls never pile up.
+OP_TIMEOUT = 20
 
 
 # ── Crypto (Safe.java) ────────────────────────────────────────────────────────
@@ -251,7 +256,7 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
 
         _LOGGER.debug("%s: connecting", self.address)
         client = await establish_connection(
-            BleakClient, ble_device, self.address, max_attempts=2
+            BleakClient, ble_device, self.address, max_attempts=1
         )
         await client.start_notify(
             RECV_UUID, lambda _, d: self._notify_queue.put_nowait(bytes(d))
@@ -271,26 +276,34 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
     async def async_disconnect(self) -> None:
         """No persistent connection is held; nothing to clean up on unload."""
 
-    async def _async_update_data(self) -> H7151State:
+    async def _run_connected(self, op):
+        """Connect, run op(client, session_key), then always disconnect.
+
+        Serialized by _lock and bounded by OP_TIMEOUT so a hung BLE call can
+        never stall the poll loop or hold the lock indefinitely.
+        """
         async with self._lock:
-            try:
+            async with asyncio.timeout(OP_TIMEOUT):
                 client, session_key = await self._connect()
                 try:
-                    return await _read_state(client, session_key, self._notify_queue)
+                    return await op(client, session_key)
                 finally:
                     await self._disconnect(client)
-            except Exception as err:
-                raise UpdateFailed(
-                    f"BLE error communicating with {self.address}: {err}"
-                ) from err
+
+    async def _async_update_data(self) -> H7151State:
+        try:
+            return await self._run_connected(
+                lambda client, key: _read_state(client, key, self._notify_queue)
+            )
+        except Exception as err:
+            raise UpdateFailed(
+                f"BLE error communicating with {self.address}: {err}"
+            ) from err
 
     async def _write(self, plain: bytes) -> None:
-        async with self._lock:
-            client, session_key = await self._connect()
-            try:
-                await _send_cmd(client, session_key, self._notify_queue, plain)
-            finally:
-                await self._disconnect(client)
+        await self._run_connected(
+            lambda client, key: _send_cmd(client, key, self._notify_queue, plain)
+        )
 
     async def async_set_power(self, on: bool) -> None:
         await self._write(_make_plain(0x33, 0x01, bytes([0x01 if on else 0x00])))
