@@ -235,47 +235,70 @@ async def _read_state(
 # ── Device ────────────────────────────────────────────────────────────────────
 
 class H7151Device:
-    """Stateless-per-connection BLE client for the H7151."""
+    """Persistent-connection BLE client for the H7151.
+
+    Holds a single connection and reuses it across polls/commands. The device
+    advertises only one connection slot and HA's slot accounting leaks if the
+    slot is repeatedly acquired and released (connect-per-poll), so we acquire
+    it once and only reconnect when the link actually drops.
+    """
 
     def __init__(self) -> None:
         self._queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._client: BleakClient | None = None
+        self._session_key: bytes | None = None
 
-    async def _connect(self, ble_device: BLEDevice) -> tuple[BleakClient, bytes]:
+    def _on_disconnect(self, _client: BleakClient) -> None:
+        self._client = None
+        self._session_key = None
+
+    def _drain(self) -> None:
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
+
+    async def _ensure(self, ble_device: BLEDevice) -> None:
+        if (
+            self._client is not None
+            and self._client.is_connected
+            and self._session_key is not None
+        ):
+            return
+        self._drain()
         client = await establish_connection(
-            BleakClient, ble_device, ble_device.address, max_attempts=CONNECT_ATTEMPTS
+            BleakClient,
+            ble_device,
+            ble_device.address,
+            disconnected_callback=self._on_disconnect,
+            max_attempts=CONNECT_ATTEMPTS,
         )
         await client.start_notify(
             RECV_UUID, lambda _, d: self._queue.put_nowait(bytes(d))
         )
         await asyncio.sleep(0.1)
-        session_key = await _key_exchange(client, self._queue)
-        return client, session_key
-
-    @staticmethod
-    async def _disconnect(client: BleakClient) -> None:
-        try:
-            await client.disconnect()
-        except Exception as err:  # pragma: no cover - best effort cleanup
-            _LOGGER.debug("disconnect error (ignored): %s", err)
+        self._session_key = await _key_exchange(client, self._queue)
+        self._client = client
 
     async def async_poll(self, ble_device: BLEDevice) -> H7151State:
-        client, session_key = await self._connect(ble_device)
-        try:
-            return await _read_state(client, session_key, self._queue)
-        finally:
-            await self._disconnect(client)
+        await self._ensure(ble_device)
+        self._drain()
+        return await _read_state(self._client, self._session_key, self._queue)
 
     async def async_command(self, ble_device: BLEDevice, plain: bytes) -> H7151State:
         """Send a command, then read back and return the resulting state."""
-        client, session_key = await self._connect(ble_device)
-        try:
-            await _send_cmd(client, session_key, self._queue, plain)
-            await asyncio.sleep(0.3)
-            return await _read_state(client, session_key, self._queue)
-        finally:
-            await self._disconnect(client)
+        await self._ensure(ble_device)
+        self._drain()
+        await _send_cmd(self._client, self._session_key, self._queue, plain)
+        await asyncio.sleep(0.3)
+        return await _read_state(self._client, self._session_key, self._queue)
+
+    async def async_stop(self) -> None:
+        """Disconnect and release the connection (called on unload)."""
+        client, self._client, self._session_key = self._client, None, None
+        if client is not None and client.is_connected:
+            try:
+                await client.disconnect()
+            except Exception as err:  # pragma: no cover - best effort cleanup
+                _LOGGER.debug("disconnect error (ignored): %s", err)

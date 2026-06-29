@@ -83,6 +83,10 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
                 f"BLE error communicating with {self.address}: {err}"
             ) from err
 
+    async def async_disconnect(self) -> None:
+        """Release the held BLE connection (called on unload)."""
+        await self._device.async_stop()
+
     async def _async_command(self, plain: bytes) -> None:
         ble_device = self._ble_device()
         if ble_device is None:
