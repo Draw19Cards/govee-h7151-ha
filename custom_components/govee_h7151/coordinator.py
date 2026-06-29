@@ -212,6 +212,8 @@ async def _read_state(
 
     r_hum = await _send_cmd(client, session_key, queue, _make_plain(0xAA, 0x05, b"\x03"))
     target_humidity = 0.0
+    if r_hum is not None:
+        _LOGGER.debug("AA 05 03 response: %s", r_hum.hex())
     if r_hum is not None and r_hum[2] == 0x03:
         target_humidity = struct.unpack(">H", r_hum[5:7])[0] / 100.0
 
