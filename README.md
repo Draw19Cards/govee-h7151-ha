@@ -58,7 +58,7 @@ In `auto` mode, set the target humidity (35–85%) using the **Set Humidity** se
 ## Notes
 
 - HA and the Govee app cannot control the device simultaneously — BLE is single-client. The integration connects on demand and disconnects after each poll.
-- The device is polled every 30 seconds.
+- Polling is **advertisement-driven**: HA connects and reads state only when it sees the device advertising and connectable (roughly every 30 seconds), and the device is marked unavailable only when it stops being seen — not on a single failed poll. This avoids hammering a device that's out of range and recovers on its own when it returns.
 - Mode state is queried explicitly each poll via the mode register — it does not rely on tracking commands sent.
 - Water-tank status is **not** exposed as an entity: the device only signals it via a one-shot push notification at the moment the tank changes, with no pollable register, so it cannot be reported reliably.
 
