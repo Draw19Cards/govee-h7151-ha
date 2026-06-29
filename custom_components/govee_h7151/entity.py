@@ -1,17 +1,15 @@
 """Shared entity base for the Govee H7151 Dehumidifier."""
 from __future__ import annotations
 
-from homeassistant.components.bluetooth.passive_update_coordinator import (
-    PassiveBluetoothCoordinatorEntity,
-)
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import H7151Coordinator
 
 
-class H7151Entity(PassiveBluetoothCoordinatorEntity[H7151Coordinator]):
-    """Base entity: device info + availability tied to the BLE coordinator."""
+class H7151Entity(CoordinatorEntity[H7151Coordinator]):
+    """Base entity: shared device info and availability."""
 
     _attr_has_entity_name = True
 
@@ -27,5 +25,4 @@ class H7151Entity(PassiveBluetoothCoordinatorEntity[H7151Coordinator]):
 
     @property
     def available(self) -> bool:
-        # Available only when the device is being seen AND we have data.
         return super().available and self.coordinator.data is not None
