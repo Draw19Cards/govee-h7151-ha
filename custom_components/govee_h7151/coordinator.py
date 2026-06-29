@@ -13,7 +13,6 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from bleak import BleakClient
-from bleak_retry_connector import establish_connection
 
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
@@ -242,7 +241,7 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
         self._notify_queue: asyncio.Queue = asyncio.Queue()
 
     def _on_disconnect(self, _client: BleakClient) -> None:
-        """Called by habluetooth when the connection drops — invalidate session."""
+        self._client = None
         self._session_key = None
 
     async def _ensure_connected(self) -> None:
@@ -275,17 +274,15 @@ class H7151Coordinator(DataUpdateCoordinator[H7151State]):
             except asyncio.QueueEmpty:
                 break
 
-        _LOGGER.debug("%s: calling establish_connection", self.address)
+        _LOGGER.debug("%s: connecting", self.address)
         try:
-            client = await establish_connection(
-                BleakClient,
+            client = BleakClient(
                 ble_device,
-                self.address,
                 disconnected_callback=self._on_disconnect,
-                max_attempts=1,
             )
+            await client.connect(timeout=10)
         except Exception as err:
-            _LOGGER.debug("%s: establish_connection failed: %s", self.address, err)
+            _LOGGER.debug("%s: connect failed: %s", self.address, err)
             raise
         _LOGGER.debug("%s: BLE connected, starting notifications", self.address)
         await client.start_notify(
