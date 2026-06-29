@@ -7,7 +7,6 @@ Local Bluetooth control of the GoveeLife H7151 Dehumidifier. No cloud, no Govee 
 - **All 5 modes**: Low, Medium, High, Auto (target humidity), Dryer
 - **Real-time sensors**: current temperature (°C) and relative humidity
 - **Target humidity control**: 35–85% in Auto mode
-- **Water tank alert**: binary sensor fires when the tank is full or removed
 - **Zero cloud dependency**: communicates directly with the device over Bluetooth
 
 ## Entities
@@ -17,7 +16,6 @@ Local Bluetooth control of the GoveeLife H7151 Dehumidifier. No cloud, no Govee 
 | Govee H7151 Dehumidifier | Humidifier | Main control (power, mode, target humidity) |
 | Temperature | Sensor | Current room temperature in °C |
 | Humidity | Sensor | Current relative humidity |
-| Water Tank | Binary Sensor | Problem alert when tank is full or removed |
 
 ## Requirements
 
@@ -60,8 +58,9 @@ In `auto` mode, set the target humidity (35–85%) using the **Set Humidity** se
 ## Notes
 
 - HA and the Govee app cannot control the device simultaneously — BLE is single-client. The integration connects on demand and disconnects after each poll.
-- The device is polled every 30 seconds. Water tank detection relies on push notifications captured at poll time; detection lag is at most one poll cycle.
+- The device is polled every 30 seconds.
 - Mode state is queried explicitly each poll via the mode register — it does not rely on tracking commands sent.
+- Water-tank status is **not** exposed as an entity: the device only signals it via a one-shot push notification at the moment the tank changes, with no pollable register, so it cannot be reported reliably.
 
 ## Protocol
 

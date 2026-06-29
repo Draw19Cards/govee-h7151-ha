@@ -214,7 +214,9 @@ The device sends spontaneous (unsolicited) `AA 01` notifications when state chan
 | `0x05` | Mode or fan speed changed via physical button |
 | `0x17` | Water tank removed or full |
 
-The driver listens for these at the start of each poll to detect tank events before issuing state queries.
+These are **transient**: the device emits the event once at the instant the state changes and does not repeat it. The current state (power, temp/humidity, mode) is always available from the poll queries, so the integration does not depend on catching pushes.
+
+Note on tank status: the `0x17` tank event is push-only. Byte-for-byte comparison of every poll response (`AA 01` and `AA 05 00`–`09`) with the tank in error vs. OK shows **no difference** other than the temperature/humidity reading — power stays `0x01`, running status stays `0x81`, and no register reflects the tank. Because the device exposes no pollable tank register and the push fires only on change, tank status cannot be reported reliably over a poll-based connection, so no tank entity is provided.
 
 ## Discovery Notes
 

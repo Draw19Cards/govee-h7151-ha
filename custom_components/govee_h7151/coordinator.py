@@ -105,7 +105,6 @@ class H7151State:
     current_humidity: float
     current_temp_c: float
     target_humidity: float
-    tank_problem: bool = False
 
 
 def _decode_mode(mode_reg: int, fan_speed: int) -> str:
@@ -183,20 +182,6 @@ async def _send_cmd(
 async def _read_state(
     client: BleakClient, session_key: bytes, queue: asyncio.Queue
 ) -> H7151State:
-    # Brief window to catch spontaneous push notifications (e.g. tank full/removed).
-    # The device sends AA 01 with byte[3]=0x17 when the tank needs attention.
-    tank_problem = False
-    listen_until = asyncio.get_event_loop().time() + 0.5
-    while asyncio.get_event_loop().time() < listen_until:
-        try:
-            remaining = listen_until - asyncio.get_event_loop().time()
-            enc = await asyncio.wait_for(queue.get(), timeout=max(0.05, remaining))
-            pkt = _safe_decrypt(enc, session_key)
-            if pkt[0] == 0xAA and pkt[1] == 0x01 and pkt[3] == 0x17:
-                tank_problem = True
-        except asyncio.TimeoutError:
-            break
-
     r1 = await _send_cmd(client, session_key, queue, _make_plain(0xAA, 0x01))
     if r1 is None:
         raise RuntimeError("No response to AA 01")
@@ -223,7 +208,6 @@ async def _read_state(
         current_humidity=current_humidity,
         current_temp_c=current_temp_c,
         target_humidity=target_humidity,
-        tank_problem=tank_problem,
     )
 
 

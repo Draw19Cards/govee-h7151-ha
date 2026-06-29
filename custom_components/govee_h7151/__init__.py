@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from .const import DOMAIN
 from .coordinator import H7151Coordinator
 
-PLATFORMS = [Platform.HUMIDIFIER, Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.HUMIDIFIER, Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
